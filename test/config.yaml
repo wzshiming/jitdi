@@ -1,0 +1,19 @@
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+spec:
+  match: "alpine/{file}:{alpine-tag}"
+  baseImage: "docker.io/library/alpine:{alpine-tag}"
+  mutates:
+  - file:
+      source: "./test/{file}"
+      destination: "/test/{file}"
+---
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+spec:
+  match: "ollama/{model-name}:{ollama-tag}-{model-tag}"
+  baseImage: "docker.io/ollama/ollama:{ollama-tag}"
+  mutates:
+  - ollama:
+      model: "registry.ollama.ai/library/{model-name}:{model-tag}"
+      workDir: "/root/.ollama/models"
