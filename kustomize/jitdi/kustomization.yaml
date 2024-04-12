@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jitdi-system
+
+resources:
+- ../crd
+- ../rbac
+- service.yaml
+- deployment.yaml
+
+labels:
+- includeSelectors: true
+  pairs:
+    app: jitdi

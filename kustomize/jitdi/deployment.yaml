@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jitdi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jitdi
+  template:
+    metadata:
+      labels:
+        app: jitdi
+    spec:
+      containers:
+      - name: jitdi
+        image: ghcr.io/wzshiming/jitdi/jitdi:v0.0.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8888
+      serviceAccountName: jitdi
+      restartPolicy: Always
