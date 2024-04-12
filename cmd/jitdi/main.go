@@ -46,11 +46,6 @@ func main() {
 
 	logger := slog.Default()
 
-	if config == "" && kubeconfig == "" {
-		logger.Error("config or kubeconfig must be set")
-		os.Exit(1)
-	}
-
 	var staticConfig []*v1alpha1.ImageSpec
 	if config != "" {
 		file, err := os.Open(config)
