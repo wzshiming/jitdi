@@ -1,12 +1,13 @@
 package handler
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"strconv"
@@ -16,12 +17,14 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/cache"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/wzshiming/jitdi/pkg/apis/v1alpha1"
+	"github.com/wzshiming/jitdi/pkg/atomic"
+	"github.com/wzshiming/jitdi/pkg/pattern"
 )
 
 type imageBuilder struct {
@@ -35,9 +38,9 @@ func newImageBuilder(cache string) (*imageBuilder, error) {
 	cacheBlobs := path.Join(cache, "blobs")
 	cacheManifests := path.Join(cache, "manifests")
 	cacheTmp := path.Join(cache, "tmp")
-	cacheOllamaBlobs := path.Join(cache, "ollama", "blobs")
+	cacheOllamaBlobs := path.Join(cacheTmp, "ollama", "blobs")
 
-	for _, p := range []string{cacheBlobs, cacheManifests, cacheTmp, cacheOllamaBlobs} {
+	for _, p := range []string{cacheBlobs, cacheManifests, cacheOllamaBlobs} {
 		err := os.MkdirAll(p, 0755)
 		if err != nil {
 			return nil, err
@@ -51,10 +54,8 @@ func newImageBuilder(cache string) (*imageBuilder, error) {
 	}, nil
 }
 
-func (i *imageBuilder) Build(ctx context.Context, newImage string, meta *MutateMeta) error {
-	o := crane.GetOptions(
-		crane.WithContext(ctx),
-	)
+func (b *imageBuilder) Build(newImage string, meta *pattern.Action) error {
+	o := crane.GetOptions()
 
 	src := meta.GetBaseImage()
 	ref, err := name.ParseReference(src, o.Name...)
@@ -62,14 +63,9 @@ func (i *imageBuilder) Build(ctx context.Context, newImage string, meta *MutateM
 		return fmt.Errorf("parsing reference %q: %w", src, err)
 	}
 
-	index, err := remote.Index(ref, o.Remote...)
+	rmt, err := remote.Get(ref, o.Remote...)
 	if err != nil {
-		return err
-	}
-
-	indexManifest, err := index.IndexManifest()
-	if err != nil {
-		return err
+		return fmt.Errorf("getting remote %q: %w", src, err)
 	}
 
 	var (
@@ -85,98 +81,140 @@ func (i *imageBuilder) Build(ctx context.Context, newImage string, meta *MutateM
 		tag = s[1]
 	}
 
-	switch indexManifest.MediaType {
+	switch rmt.MediaType {
+	default:
+		return fmt.Errorf("unknown media type %q", rmt.MediaType)
 	case types.DockerManifestList, types.OCIImageIndex:
-		cacheMutate := map[string][]mutate.Addendum{}
+		imageIndex, err := rmt.ImageIndex()
+		if err != nil {
+			return fmt.Errorf("getting image index: %w", err)
+		}
+		indexManifest, err := imageIndex.IndexManifest()
+		if err != nil {
+			return fmt.Errorf("getting index manifest: %w", err)
+		}
+		g := errgroup.Group{}
+		g.SetLimit(2)
+
+		images := make([]v1.Image, len(indexManifest.Manifests))
+		for i, manifest := range indexManifest.Manifests {
+			img, err := imageIndex.Image(manifest.Digest)
+			if err != nil {
+				return fmt.Errorf("getting image %q: %w", manifest.Digest, err)
+			}
+			// img = cache.Image(img, NewFilesystemCache(b.cacheBlobs))
+
+			err = b.saveManifest(img, "", "")
+			if err != nil {
+				return fmt.Errorf("save manifest: %w", err)
+			}
+
+			index := i
+			doMutate := func() error {
+				img, err := b.mutateManifest(img, meta, manifest.Platform, manifest.MediaType)
+				if err != nil {
+					return fmt.Errorf("mutate manifest: %w", err)
+				}
+
+				err = b.saveManifest(img, "", "")
+				if err != nil {
+					return fmt.Errorf("save manifest: %w", err)
+				}
+				images[index] = img
+				return nil
+			}
+			err = doMutate()
+			if err != nil {
+				return err
+			}
+			//if index == 0 {
+			//	err = doMutate()
+			//	if err != nil {
+			//		return err
+			//	}
+			//} else {
+			//	g.Go(doMutate)
+			//}
+		}
+		err = g.Wait()
+		if err != nil {
+			return err
+		}
+
 		manifests := make([]v1.Descriptor, 0, len(indexManifest.Manifests))
-		for _, m := range indexManifest.Manifests {
-			img, err := index.Image(m.Digest)
-			if err != nil {
-				return err
+		for i, img := range images {
+			if img == nil {
+				continue
 			}
-			img = cache.Image(img, NewFilesystemCache(i.cacheBlobs))
-
-			plfm := m.Platform.String()
-
-			mutates, ok := cacheMutate[plfm]
-			if !ok {
-				mu := meta.GetMutates(m.Platform)
-				addendum, err := i.buildAddendum(m.MediaType, mu)
-				if err != nil {
-					return fmt.Errorf("build addendum: %w", err)
-				}
-				cacheMutate[plfm] = addendum
-				mutates = addendum
-			}
-
-			if len(mutates) != 0 {
-				img, err = mutate.Append(img, mutates...)
-				if err != nil {
-					return fmt.Errorf("mutate append: %w", err)
-				}
-			}
-
-			err = i.saveIndexManifest(img)
-			if err != nil {
-				return err
-			}
-
 			digest, err := img.Digest()
 			if err != nil {
-				return err
+				return fmt.Errorf("getting digest: %w", err)
 			}
+
+			//mediaType, err := img.MediaType()
+			//if err != nil {
+			//	return fmt.Errorf("getting media type: %w", err)
+			//}
+
 			size, err := img.Size()
 			if err != nil {
-				return err
+				return fmt.Errorf("getting size: %w", err)
 			}
+
+			manifest := indexManifest.Manifests[i]
 			manifests = append(manifests, v1.Descriptor{
-				MediaType: m.MediaType,
 				Size:      size,
 				Digest:    digest,
-				Platform:  m.Platform,
+				MediaType: manifest.MediaType,
+				Platform:  manifest.Platform,
 			})
+		}
+		if len(manifests) == 0 {
+			return fmt.Errorf("no valid images")
 		}
 
 		indexManifest.Manifests = manifests
-
-		err = i.saveIndex(indexManifest, image, tag)
+		err = b.saveIndexManifest(indexManifest, image, tag)
 		if err != nil {
-			return err
+			return fmt.Errorf("save index manifest: %w", err)
 		}
 	case types.OCIManifestSchema1, types.DockerManifestSchema2:
-		rmt, err := remote.Get(ref, o.Remote...)
-		if err != nil {
-			return err
-		}
-
 		img, err := rmt.Image()
 		if err != nil {
-			return err
+			return fmt.Errorf("getting image: %w", err)
 		}
+		//img = cache.Image(img, NewFilesystemCache(b.cacheBlobs))
 
-		img = cache.Image(img, NewFilesystemCache(i.cacheBlobs))
-
-		mutates := meta.GetMutates(rmt.Platform)
-		if len(mutates) != 0 {
-			addendum, err := i.buildAddendum(indexManifest.MediaType, mutates)
-			if err != nil {
-				return err
-			}
-			img, err = mutate.Append(img, addendum...)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = i.saveManifest(img, image, tag)
+		img, err = b.mutateManifest(img, meta, rmt.Platform, rmt.MediaType)
 		if err != nil {
-			return err
+			return fmt.Errorf("mutate manifest: %w", err)
+		}
+
+		err = b.saveManifest(img, image, tag)
+		if err != nil {
+			return fmt.Errorf("save manifest: %w", err)
+		}
+	case types.DockerManifestSchema1:
+		img, err := rmt.Schema1()
+		if err != nil {
+			return fmt.Errorf("getting image: %w", err)
+		}
+		//img = cache.Image(img, NewFilesystemCache(b.cacheBlobs))
+
+		img, err = b.mutateManifest(img, meta, rmt.Platform, rmt.MediaType)
+		if err != nil {
+			return fmt.Errorf("mutate manifest: %w", err)
+		}
+
+		err = b.saveManifest(img, image, tag)
+		if err != nil {
+			return fmt.Errorf("save manifest: %w", err)
 		}
 	}
 	return nil
 }
 
-func (i *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alpha1.Mutate) ([]mutate.Addendum, error) {
+func (b *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alpha1.Mutate) ([]mutate.Addendum, error) {
 	var layerMediaType types.MediaType
 	switch mediaType {
 	default:
@@ -201,147 +239,64 @@ func (i *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alph
 				}
 			}
 
-			builder := NewFileLayerBuilder(i.cacheTmp, mode, creationTime)
-			r, err := builder.Build(m.File.Source, m.File.Destination)
+			builder := NewFileLayerBuilder(b.cacheTmp, mode, creationTime, layerMediaType)
+			addendums, err := builder.Build(m.File.Source, m.File.Destination)
 			if err != nil {
 				return nil, fmt.Errorf("file layer builder: %w", err)
 			}
 
-			dataLayer, err := tarball.LayerFromFile(r,
-				tarball.WithMediaType(layerMediaType),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("toLayer: %w", err)
-			}
-
-			layers = append(layers, mutate.Addendum{
-				Layer: dataLayer,
-				History: v1.History{
-					Author:    "jitdi",
-					CreatedBy: fmt.Sprintf("COPY %s %s", m.File.Source, m.File.Destination),
-					Comment:   fmt.Sprintf("Copy %s to %s", m.File.Source, m.File.Destination),
-					Created:   v1.Time{creationTime},
-				},
-			})
+			return addendums, nil
 		} else if m.Ollama != nil {
-			builder := NewOllamaLayerBuilder(i.cacheTmp, i.cacheOllamaBlobs, 0444, creationTime)
-			r, err := builder.Build(context.Background(), m.Ollama.Model, m.Ollama.WorkDir)
+
+			builder := NewOllamaLayerBuilder(b.cacheOllamaBlobs, NewFileLayerBuilder(b.cacheTmp, 0644, creationTime, layerMediaType))
+			addendums, err := builder.Build(m.Ollama.Model, m.Ollama.WorkDir)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("ollama layer builder: %w", err)
 			}
 
-			dataLayer, err := tarball.LayerFromFile(r,
-				tarball.WithMediaType(layerMediaType),
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			layers = append(layers, mutate.Addendum{
-				Layer: dataLayer,
-				History: v1.History{
-					Author:    "jitdi",
-					CreatedBy: fmt.Sprintf("OLLAMA_PULL %s %s", m.Ollama.Model, m.Ollama.WorkDir),
-					Comment:   fmt.Sprintf("Pull %s to %s", m.Ollama.Model, m.Ollama.WorkDir),
-					Created:   v1.Time{creationTime},
-				},
-			})
+			return addendums, nil
 		}
 	}
 
 	return layers, nil
 }
 
-func (i *imageBuilder) manifestPath(image, tag string) string {
-	return path.Join(i.cacheManifests, image, tag, "manifest.json")
+func (b *imageBuilder) ManifestPath(image, tag string) string {
+	return path.Join(b.cacheManifests, image, tag, "manifest.json")
 }
 
-func (i *imageBuilder) blobsPath(hex string) string {
-	return path.Join(i.cacheBlobs, "sha256:"+hex)
+func (b *imageBuilder) BlobsPath(hex string) string {
+	switch len(hex) {
+	case 64:
+		return path.Join(b.cacheBlobs, "sha256:"+hex)
+	case 71:
+		return path.Join(b.cacheBlobs, hex)
+	}
+	return path.Join(b.cacheBlobs, "unknown:"+hex)
 }
 
-func (i *imageBuilder) blobsPathWithPrefix(hex string) string {
-	return path.Join(i.cacheBlobs, hex)
+func (b *imageBuilder) mutateManifest(img v1.Image, meta *pattern.Action, p *v1.Platform, mediaType types.MediaType) (v1.Image, error) {
+	mutates := meta.GetMutates(p)
+	if len(mutates) == 0 {
+		return img, nil
+	}
+
+	addendums, err := b.buildAddendum(mediaType, mutates)
+	if err != nil {
+		return nil, fmt.Errorf("build addendum: %w", err)
+	}
+
+	if len(addendums) != 0 {
+		img, err = mutate.Append(img, addendums...)
+		if err != nil {
+			return nil, fmt.Errorf("mutate append: %w", err)
+		}
+	}
+
+	return img, nil
 }
 
-func (i *imageBuilder) saveManifest(img v1.Image, name, tag string) error {
-	manifest, err := img.Manifest()
-	if err != nil {
-		return err
-	}
-	manifestBlob, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-	sum256 := sha256.Sum256(manifestBlob)
-
-	cfgHex := hex.EncodeToString(sum256[:])
-
-	err = atomicWriteFile(i.manifestPath(name, tag), manifestBlob, 0644)
-	if err != nil {
-		return err
-	}
-
-	err = atomicWriteFile(i.blobsPath(cfgHex), manifestBlob, 0644)
-	if err != nil {
-		return err
-	}
-
-	// Write the config.
-	cfgName, err := img.ConfigName()
-	if err != nil {
-		return err
-	}
-	cfgBlob, err := img.RawConfigFile()
-	if err != nil {
-		return err
-	}
-
-	err = atomicWriteFile(i.blobsPath(cfgName.Hex), cfgBlob, 0644)
-	if err != nil {
-		return err
-	}
-
-	// Write the layers.
-	layers, err := img.Layers()
-	if err != nil {
-		return err
-	}
-
-	var seenLayerDigests = map[string]struct{}{}
-	for _, l := range layers {
-		d, err := l.Digest()
-		if err != nil {
-			return err
-		}
-
-		hex := d.Hex
-		if _, ok := seenLayerDigests[hex]; ok {
-			continue
-		}
-		seenLayerDigests[hex] = struct{}{}
-
-		r, err := l.Compressed()
-		if err != nil {
-			return err
-		}
-
-		f, err := atomicWriteFileStream(i.blobsPath(hex), 0644)
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(f, r)
-		f.Close()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (i *imageBuilder) saveIndex(index *v1.IndexManifest, name, tag string) error {
+func (b *imageBuilder) saveIndex(index *v1.IndexManifest, name, tag string) error {
 	manifestBlob, err := json.Marshal(index)
 	if err != nil {
 		return err
@@ -350,11 +305,11 @@ func (i *imageBuilder) saveIndex(index *v1.IndexManifest, name, tag string) erro
 
 	cfgHex := hex.EncodeToString(sum256[:])
 
-	err = atomicWriteFile(i.blobsPath(cfgHex), manifestBlob, 0644)
+	err = atomic.WriteFile(b.BlobsPath(cfgHex), manifestBlob, 0644)
 	if err != nil {
 		return err
 	}
-	err = atomicWriteFile(i.manifestPath(name, tag), manifestBlob, 0644)
+	err = atomic.WriteFile(b.ManifestPath(name, tag), manifestBlob, 0644)
 	if err != nil {
 		return err
 	}
@@ -362,74 +317,174 @@ func (i *imageBuilder) saveIndex(index *v1.IndexManifest, name, tag string) erro
 	return err
 }
 
-func (i *imageBuilder) saveIndexManifest(img v1.Image) error {
-	manifest, err := img.Manifest()
+func (b *imageBuilder) saveIndexManifest(index *v1.IndexManifest, name, tag string) error {
+	manifestBlob, err := json.Marshal(index)
 	if err != nil {
 		return err
 	}
-	manifestBlob, err := json.Marshal(manifest)
+
+	err = atomic.WriteFile(b.BlobsPath(atomic.SumSha256(manifestBlob)), manifestBlob, 0644)
 	if err != nil {
 		return err
 	}
-	sum256 := sha256.Sum256(manifestBlob)
-
-	cfgHex := hex.EncodeToString(sum256[:])
-
-	err = atomicWriteFile(i.blobsPath(cfgHex), manifestBlob, 0644)
+	err = atomic.WriteFile(b.ManifestPath(name, tag), manifestBlob, 0644)
 	if err != nil {
 		return err
+	}
+
+	return err
+}
+
+func (b *imageBuilder) saveManifest(img v1.Image, name, tag string) error {
+	layers, err := img.Layers()
+	if err != nil {
+		return fmt.Errorf("getting layers: %w", err)
+	}
+
+	for _, layer := range layers {
+		err = b.saveLayer(layer)
+		if err != nil {
+			return fmt.Errorf("save layer: %w", err)
+		}
+	}
+
+	manifestBlob, err := img.RawManifest()
+	if err != nil {
+		return fmt.Errorf("getting raw manifest: %w", err)
+	}
+
+	err = atomic.WriteFile(b.BlobsPath(atomic.SumSha256(manifestBlob)), manifestBlob, 0644)
+	if err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
+	if name != "" {
+		if tag == "" {
+			tag = "latest"
+		}
+		err = atomic.WriteFile(b.ManifestPath(name, tag), manifestBlob, 0644)
+		if err != nil {
+			return fmt.Errorf("write manifest: %w", err)
+		}
 	}
 
 	// Write the config.
-	cfgName, err := img.ConfigName()
+	configName, err := img.ConfigName()
 	if err != nil {
-		return err
+		return fmt.Errorf("getting config name: %w", err)
 	}
-	cfgBlob, err := img.RawConfigFile()
+	configBlob, err := img.RawConfigFile()
 	if err != nil {
-		return err
+		return fmt.Errorf("getting raw config file: %w", err)
 	}
 
-	err = atomicWriteFile(i.blobsPath(cfgName.Hex), cfgBlob, 0644)
+	err = atomic.WriteFile(b.BlobsPath(configName.Hex), configBlob, 0644)
 	if err != nil {
-		return err
+		return fmt.Errorf("write config: %w", err)
 	}
 
-	// Write the layers.
-	layers, err := img.Layers()
+	return nil
+}
+
+func saveLayer(layer v1.Layer, cachePath string) (string, error) {
+	f, err := os.CreateTemp(cachePath, "tmp-")
 	if err != nil {
-		return err
+		return "", fmt.Errorf("create temp: %w", err)
 	}
 
-	var seenLayerDigests = map[string]struct{}{}
-	for _, l := range layers {
-		d, err := l.Digest()
-		if err != nil {
-			return err
-		}
-
-		hex := d.Hex
-		if _, ok := seenLayerDigests[hex]; ok {
-			continue
-		}
-		seenLayerDigests[hex] = struct{}{}
-
-		r, err := l.Compressed()
-		if err != nil {
-			return err
-		}
-
-		f, err := atomicWriteFileStream(i.blobsPath(hex), 0644)
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(f, r)
-		f.Close()
-		if err != nil {
-			return err
-		}
+	r, err := layer.Compressed()
+	if err != nil {
+		return "", fmt.Errorf("getting compressed: %w", err)
 	}
+
+	_, err = io.Copy(f, r)
+	if err != nil {
+		_ = f.Close()
+		return "", fmt.Errorf("copy: %w", err)
+	}
+	_ = f.Close()
+
+	digest, err := layer.Digest()
+	if err != nil {
+		return "", fmt.Errorf("getting digest: %w", err)
+	}
+
+	p := path.Join(cachePath, digest.String())
+	err = os.Rename(f.Name(), p)
+	if err != nil {
+		return "", fmt.Errorf("rename: %w", err)
+	}
+
+	return p, nil
+}
+
+func (b *imageBuilder) saveLayer(layer v1.Layer) (retErr error) {
+	r, err := layer.Compressed()
+	if err != nil {
+		return fmt.Errorf("getting compressed: %w", err)
+	}
+	defer func() {
+		err := r.Close()
+		if err != nil {
+			if retErr == nil {
+				retErr = err
+			} else {
+				retErr = errors.Join(retErr, err)
+			}
+		}
+	}()
+
+	digest, err := layer.Digest()
+	if err != nil {
+		return fmt.Errorf("getting digest: %w", err)
+	}
+
+	size, err := layer.Size()
+	if err != nil {
+		return fmt.Errorf("getting size: %w", err)
+	}
+
+	if size <= 0 {
+		return fmt.Errorf("size is zero")
+	}
+
+	cachePath := path.Join(b.cacheBlobs, digest.String())
+	_, err = os.Stat(cachePath)
+	if err == nil {
+		slog.Info("skip layer", "size", size, "path", cachePath)
+		return nil
+	}
+
+	sum := sha256.New()
+	wc, err := atomic.OpenFileWithWriter(cachePath, 0644)
+	if err != nil {
+		return fmt.Errorf("open file with writer: %w", err)
+	}
+
+	n, err := io.Copy(wc, io.TeeReader(r, sum))
+	if err != nil {
+		_ = wc.Abort()
+		return fmt.Errorf("copy: %w", err)
+	}
+
+	hash := hex.EncodeToString(sum.Sum(nil))
+	if hash != digest.Hex {
+		_ = wc.Abort()
+		return fmt.Errorf("hash mismatch %q != %q and size mismatch %d != %d", hash, digest.Hex, n, size)
+	}
+
+	if n != size {
+		_ = wc.Abort()
+		return fmt.Errorf("size mismatch %d != %d", n, size)
+	}
+
+	err = wc.Close()
+	if err != nil {
+		_ = wc.Abort()
+		return fmt.Errorf("close: %w", err)
+	}
+
+	slog.Info("save layer", "size", size, "path", cachePath)
 
 	return nil
 }
