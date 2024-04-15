@@ -29,7 +29,7 @@ func NewOllamaLayerBuilder(modelCachePath string, fileBuilder *FileLayerBuilder)
 	}
 }
 
-func (b *OllamaLayerBuilder) Build(modelPath, workDir string) ([]mutate.Addendum, error) {
+func (b *OllamaLayerBuilder) Build(modelPath, workDir, modelName string) ([]mutate.Addendum, error) {
 	o := crane.GetOptions()
 
 	ref, err := name.ParseReference(modelPath, o.Name...)
@@ -54,10 +54,10 @@ func (b *OllamaLayerBuilder) Build(modelPath, workDir string) ([]mutate.Addendum
 		return nil, err
 	}
 
-	return b.tarModel(img, modelPath, workDir)
+	return b.tarModel(img, modelPath, workDir, modelName)
 }
 
-func (b *OllamaLayerBuilder) tarModel(image v1.Image, modelPath, workDir string) ([]mutate.Addendum, error) {
+func (b *OllamaLayerBuilder) tarModel(image v1.Image, modelPath, workDir, modelName string) ([]mutate.Addendum, error) {
 	layers, err := image.Layers()
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (b *OllamaLayerBuilder) tarModel(image v1.Image, modelPath, workDir string)
 
 	var addendums []mutate.Addendum
 
-	a, err := b.tarManifest(image, modelPath, workDir)
+	a, err := b.tarManifest(image, modelPath, workDir, modelName)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +101,17 @@ func (b *OllamaLayerBuilder) tarConfig(image v1.Image, workDir string) ([]mutate
 	return b.fileBuilder.BuildFile(bytes.NewBuffer(confBlob), newPath, size)
 
 }
-func (b *OllamaLayerBuilder) tarManifest(image v1.Image, modelPath, workDir string) ([]mutate.Addendum, error) {
+func (b *OllamaLayerBuilder) tarManifest(image v1.Image, modelPath, workDir, modelName string) ([]mutate.Addendum, error) {
 	m, err := image.RawManifest()
 	if err != nil {
 		return nil, err
 	}
 
-	newPath := path.Join(workDir, "manifests", strings.Replace(modelPath, ":", "/", 1))
+	if modelName == "" {
+		modelName = strings.Replace(modelPath, ":", "/", 1)
+	}
+
+	newPath := path.Join(workDir, "manifests", modelName)
 	size := int64(len(m))
 
 	return b.fileBuilder.BuildFile(bytes.NewBuffer(m), newPath, size)

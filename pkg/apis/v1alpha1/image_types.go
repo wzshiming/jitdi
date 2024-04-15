@@ -61,8 +61,9 @@ type File struct {
 
 // Ollama holds the ollama information
 type Ollama struct {
-	Model   string `json:"model"`
-	WorkDir string `json:"workDir"`
+	Model     string `json:"model"`
+	ModelName string `json:"modelName"`
+	WorkDir   string `json:"workDir"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
