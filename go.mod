@@ -6,6 +6,7 @@ require (
 	github.com/google/go-containerregistry v0.19.1
 	github.com/gorilla/handlers v1.5.2
 	github.com/spf13/pflag v1.0.5
+	golang.org/x/sync v0.7.0
 	k8s.io/apimachinery v0.29.3
 	k8s.io/client-go v0.29.3
 	k8s.io/code-generator v0.29.3
@@ -56,7 +57,6 @@ require (
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/oauth2 v0.12.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/term v0.15.0 // indirect
 	golang.org/x/text v0.14.0 // indirect

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,25 +17,27 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/wzshiming/jitdi/pkg/apis/v1alpha1"
+	"github.com/wzshiming/jitdi/pkg/atomic"
 	"github.com/wzshiming/jitdi/pkg/client/clientset/versioned"
+	"github.com/wzshiming/jitdi/pkg/pattern"
 )
 
 type Handler struct {
-	mut   sync.Mutex
-	image *imageBuilder
+	buildMutex atomic.SyncMap[string, *sync.RWMutex]
+	image      *imageBuilder
 
-	rules []*imageRule
+	rules []*pattern.Rule
 
 	crMut     sync.Mutex
-	cr        []*imageRule
+	cr        []*pattern.Rule
 	store     cache.Store
 	clientset *versioned.Clientset
 }
 
 func NewHandler(cache string, config []*v1alpha1.ImageSpec, clientset *versioned.Clientset) (*Handler, error) {
-	rules := make([]*imageRule, 0, len(config))
+	rules := make([]*pattern.Rule, 0, len(config))
 	for _, c := range config {
-		r, err := newImageRule(c)
+		r, err := pattern.NewRule(c)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +96,7 @@ func (h *Handler) resetCR() {
 	h.cr = nil
 }
 
-func (h *Handler) getRules() []*imageRule {
+func (h *Handler) getRules() []*pattern.Rule {
 	if h.store == nil {
 		return h.rules
 	}
@@ -106,7 +107,7 @@ func (h *Handler) getRules() []*imageRule {
 		h.cr = h.rules
 		for _, item := range h.store.List() {
 			image := item.(*v1alpha1.Image)
-			r, err := newImageRule(&image.Spec)
+			r, err := pattern.NewRule(&image.Spec)
 			if err != nil {
 				slog.Error("newImageRule", "err", err)
 				continue
@@ -152,16 +153,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) blobs(w http.ResponseWriter, r *http.Request, image, hash string) {
-	http.ServeFile(w, r, h.image.blobsPathWithPrefix(hash))
+	http.ServeFile(w, r, h.image.BlobsPath(hash))
 }
 
 func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag string) {
 	if strings.HasPrefix(tag, "sha256:") {
-		serveManifest(w, r, h.image.blobsPathWithPrefix(tag))
+		serveManifest(w, r, h.image.BlobsPath(tag))
 		return
 	}
 
-	manifestPath := h.image.manifestPath(image, tag)
+	manifestPath := h.image.ManifestPath(image, tag)
 	_, err := os.Stat(manifestPath)
 	if err != nil {
 		err := h.build(image, tag)
@@ -172,17 +173,30 @@ func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag s
 		}
 	}
 
-	serveManifest(w, r, h.image.manifestPath(image, tag))
+	serveManifest(w, r, h.image.ManifestPath(image, tag))
 }
 
 func (h *Handler) build(image, tag string) error {
-	h.mut.Lock()
-	defer h.mut.Unlock()
 	ref := image + ":" + tag
-	for _, rule := range h.getRules() {
-		mutates, ok := rule.match(ref)
+
+	mut, ok := h.buildMutex.LoadOrStore(ref, &sync.RWMutex{})
+	if ok {
+		mut.RLock()
+		defer mut.RUnlock()
+		return nil
+	}
+
+	mut.Lock()
+	defer func() {
+		h.buildMutex.Delete(ref)
+		mut.Unlock()
+	}()
+
+	rules := h.getRules()
+	for _, rule := range rules {
+		mutates, ok := rule.Match(ref)
 		if ok {
-			err := h.image.Build(context.Background(), ref, mutates)
+			err := h.image.Build(ref, mutates)
 			if err != nil {
 				return err
 			}
@@ -220,84 +234,4 @@ func serveManifest(w http.ResponseWriter, r *http.Request, manifestPath string) 
 	w.Header().Set("Content-Type", string(mediaType.MediaType))
 	_, _ = f.Seek(0, 0)
 	http.ServeContent(w, r, path.Base(r.URL.Path), stat.ModTime(), f)
-}
-
-type imageRule struct {
-	Match     *pattern
-	BaseImage string
-	Mutates   []v1alpha1.Mutate
-}
-
-func newImageRule(conf *v1alpha1.ImageSpec) (*imageRule, error) {
-	pat, err := parsePattern(conf.Match)
-	if err != nil {
-		return nil, err
-	}
-	return &imageRule{
-		Match:     pat,
-		BaseImage: conf.BaseImage,
-		Mutates:   conf.Mutates,
-	}, nil
-}
-
-func (i *imageRule) match(image string) (*MutateMeta, bool) {
-
-	params, ok := i.Match.Match(image)
-	if !ok {
-		return nil, false
-	}
-
-	return &MutateMeta{
-		params:    params,
-		BaseImage: i.BaseImage,
-		Mutates:   i.Mutates,
-	}, true
-}
-
-type MutateMeta struct {
-	params    map[string]string
-	BaseImage string
-	Mutates   []v1alpha1.Mutate
-}
-
-func (m *MutateMeta) GetBaseImage() string {
-	baseImage := m.BaseImage
-	baseImage = replaceWithParams(baseImage, m.params)
-
-	return baseImage
-}
-
-func (m *MutateMeta) GetMutates(p *v1.Platform) []v1alpha1.Mutate {
-	mutates := m.Mutates
-	mutates = replaceMutateWithParams(mutates, m.params)
-	return mutates
-}
-
-func replaceWithParams(s string, params map[string]string) string {
-	for k, v := range params {
-		s = strings.ReplaceAll(s, "{"+k+"}", v)
-	}
-	return s
-}
-
-func replaceMutateWithParams(m []v1alpha1.Mutate, params map[string]string) []v1alpha1.Mutate {
-	ms := make([]v1alpha1.Mutate, 0, len(m))
-	for _, v := range m {
-		if v.File != nil {
-			ms = append(ms, v1alpha1.Mutate{
-				File: &v1alpha1.File{
-					Source:      replaceWithParams(v.File.Source, params),
-					Destination: replaceWithParams(v.File.Destination, params),
-				},
-			})
-		} else if v.Ollama != nil {
-			ms = append(ms, v1alpha1.Mutate{
-				Ollama: &v1alpha1.Ollama{
-					Model:   replaceWithParams(v.Ollama.Model, params),
-					WorkDir: replaceWithParams(v.Ollama.WorkDir, params),
-				},
-			})
-		}
-	}
-	return ms
 }

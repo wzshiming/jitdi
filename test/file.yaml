@@ -1,0 +1,12 @@
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+metadata:
+  name: file-test
+spec:
+  match: "k8s/{base}/{file}:{tag}"
+  baseImage: "docker.io/library/{base}:latest"
+  mutates:
+  - file:
+      source: "https://dl.k8s.io/{tag}/bin/{GOOS}/{GOARCH}/{file}"
+      destination: "/usr/local/bin/{file}"
+      mode: '0755'

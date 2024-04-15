@@ -1,0 +1,7 @@
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+metadata:
+  name: mirror-test
+spec:
+  match: "library/{image}:{tag}"
+  baseImage: "docker.io/library/{image}:{tag}"

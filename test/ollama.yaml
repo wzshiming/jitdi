@@ -1,0 +1,11 @@
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+metadata:
+  name: ollama-test
+spec:
+  match: "ollama/{model}:{tag}"
+  baseImage: "docker.io/ollama/ollama:latest"
+  mutates:
+  - ollama:
+      model: "registry.ollama.ai/library/{model}:{tag}"
+      workDir: "/root/.ollama/models"
