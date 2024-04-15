@@ -16,7 +16,19 @@ spec:
       - name: jitdi
         image: ghcr.io/wzshiming/jitdi/jitdi:v0.0.3
         imagePullPolicy: IfNotPresent
+        args:
+        - --cache
+        - /var/cache/jitdi
         ports:
         - containerPort: 8888
+        volumeMounts:
+        - mountPath: /var/cache/jitdi
+          name: cache
       serviceAccountName: jitdi
       restartPolicy: Always
+      volumes:
+      - name: cache
+        hostPath:
+          path: /var/cache/jitdi
+          type: DirectoryOrCreate
+
