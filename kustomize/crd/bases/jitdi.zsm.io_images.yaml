@@ -65,10 +65,13 @@ spec:
                       properties:
                         model:
                           type: string
+                        modelName:
+                          type: string
                         workDir:
                           type: string
                       required:
                       - model
+                      - modelName
                       - workDir
                       type: object
                   type: object

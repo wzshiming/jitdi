@@ -51,8 +51,9 @@ func replaceMutateWithParams(m []v1alpha1.Mutate, params map[string]string) []v1
 		} else if v.Ollama != nil {
 			ms = append(ms, v1alpha1.Mutate{
 				Ollama: &v1alpha1.Ollama{
-					Model:   replaceWithParams(v.Ollama.Model, params),
-					WorkDir: replaceWithParams(v.Ollama.WorkDir, params),
+					Model:     replaceWithParams(v.Ollama.Model, params),
+					WorkDir:   replaceWithParams(v.Ollama.WorkDir, params),
+					ModelName: replaceWithParams(v.Ollama.ModelName, params),
 				},
 			})
 		}

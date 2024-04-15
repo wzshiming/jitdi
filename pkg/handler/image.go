@@ -236,7 +236,7 @@ func (b *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alph
 		} else if m.Ollama != nil {
 
 			builder := NewOllamaLayerBuilder(b.cacheOllamaBlobs, NewFileLayerBuilder(b.cacheTmp, 0644, creationTime, layerMediaType))
-			addendums, err := builder.Build(m.Ollama.Model, m.Ollama.WorkDir)
+			addendums, err := builder.Build(m.Ollama.Model, m.Ollama.WorkDir, m.Ollama.ModelName)
 			if err != nil {
 				return nil, fmt.Errorf("ollama layer builder: %w", err)
 			}
