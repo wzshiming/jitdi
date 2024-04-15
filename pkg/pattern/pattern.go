@@ -90,3 +90,27 @@ func matchSegments(segs []segment, s string) (map[string]string, bool) {
 	}
 	return params, off == len(s)
 }
+
+func patternLess(p1, p2 *pattern) bool {
+	if len(p1.segments) != len(p2.segments) {
+		if len(p1.segments) == 1 {
+			return true
+		} else if len(p2.segments) == 1 {
+			return false
+		}
+	}
+
+	if p1.segments[0].wildcard != p2.segments[0].wildcard {
+		return p1.segments[0].wildcard == false
+	}
+
+	for i := 0; i != len(p1.segments) && i != len(p2.segments); i++ {
+		if p1.segments[i].wildcard == false && p2.segments[i].wildcard == false {
+			if len(p1.segments[i].s) != len(p2.segments[i].s) {
+				return len(p1.segments[i].s) > len(p2.segments[i].s)
+			}
+		}
+	}
+
+	return len(p1.segments) > len(p2.segments)
+}

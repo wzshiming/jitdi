@@ -33,3 +33,7 @@ func (r *Rule) Match(image string) (*Action, bool) {
 		rule:   r,
 	}, true
 }
+
+func (r *Rule) LessThan(o *Rule) bool {
+	return patternLess(r.match, o.match)
+}

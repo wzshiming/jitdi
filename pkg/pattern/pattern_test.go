@@ -1,7 +1,9 @@
 package pattern
 
 import (
+	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -142,4 +144,53 @@ func Test_matchSegments(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_patternLess(t *testing.T) {
+	list := []string{
+		"alpine:{tag}",
+		"alpine:latest",
+		"alpine:3",
+		"{image}:latest",
+		"library/{image}:latest",
+		"library/{image}:latest-arm64",
+		"library/{image}:latest-{arch}",
+		"docker.io/library/{image}:latest-{arch}",
+		"docker.io/{repo}/{image}:latest",
+		"docker.io/amd64/{image}:latest",
+		"{domain}/library/{image}:latest",
+		"{domain}/library/{image}:{arch}",
+	}
+	sort.Slice(list, func(i, j int) bool {
+		a, _ := parsePattern(list[i])
+		b, _ := parsePattern(list[j])
+		return patternLess(a, b)
+	})
+
+	want := []string{
+		"alpine:latest",
+		"alpine:3",
+		"docker.io/library/{image}:latest-{arch}",
+		"docker.io/amd64/{image}:latest",
+		"docker.io/{repo}/{image}:latest",
+		"library/{image}:latest-arm64",
+		"library/{image}:latest-{arch}",
+		"library/{image}:latest",
+		"alpine:{tag}",
+		"{domain}/library/{image}:latest",
+		"{domain}/library/{image}:{arch}",
+		"{image}:latest",
+	}
+
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("patternLess() got = %#v, want %#v", list, want)
+
+		for _, v := range list {
+			fmt.Println(v)
+		}
+	}
+}
+
+func Test_patternSort(t *testing.T) {
+
 }

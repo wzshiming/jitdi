@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -48,6 +49,9 @@ func NewHandler(cache string, config []*v1alpha1.ImageSpec, clientset *versioned
 		return nil, err
 	}
 
+	sort.Slice(rules, func(i, j int) bool {
+		return rules[i].LessThan(rules[j])
+	})
 	h := &Handler{
 		image:     builder,
 		rules:     rules,
@@ -104,16 +108,24 @@ func (h *Handler) getRules() []*pattern.Rule {
 	h.crMut.Lock()
 	defer h.crMut.Unlock()
 	if h.cr == nil {
-		h.cr = h.rules
-		for _, item := range h.store.List() {
+		list := h.store.List()
+		cr := make([]*pattern.Rule, 0, len(h.rules)+len(list))
+		cr = append(cr, h.rules...)
+
+		for _, item := range list {
 			image := item.(*v1alpha1.Image)
 			r, err := pattern.NewRule(&image.Spec)
 			if err != nil {
 				slog.Error("newImageRule", "err", err)
 				continue
 			}
-			h.cr = append(h.cr, r)
+			cr = append(cr, r)
 		}
+		sort.Slice(cr, func(i, j int) bool {
+			return cr[i].LessThan(cr[j])
+		})
+
+		h.cr = cr
 	}
 
 	return h.cr
