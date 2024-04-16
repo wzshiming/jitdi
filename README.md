@@ -16,6 +16,16 @@ jitdi -c ./test/file.yaml
 docker run -it --rm host.docker.internal:8888/k8s/alpine/kubectl:v1.29.3 ls -lh /usr/local/bin/
 ```
 
+### Llama.cpp Model
+
+```yaml
+jitdi -c ./test/llama-cpp.yaml
+```
+
+```bash
+docker run --rm -it host.docker.internal:8888/llama-cpp/llama-2:full-7b-chat-Q2_K-gguf --run -m /models/7b/llama-2-7b-chat.Q2_K.gguf -p "Building a website can be done in 10 simple steps:" -n 512
+```
+
 #### Ollama Model
 
 ```yaml

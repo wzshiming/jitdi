@@ -1,0 +1,13 @@
+apiVersion: jitdi.zsm.io/v1alpha1
+kind: Image
+metadata:
+  name: llama-cpp
+spec:
+  match: "llama-cpp/llama-2:{llama-tag}-{size}b-chat-{quant}-gguf"
+  # https://github.com/ggerganov/llama.cpp/pkgs/container/llama.cpp
+  baseImage: "ghcr.io/ggerganov/llama.cpp:{llama-tag}"
+  mutates:
+  - file:
+      # https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/tree/main
+      source: "https://huggingface.co/TheBloke/Llama-2-{size}B-Chat-GGUF/resolve/main/llama-2-{size}b-chat.{quant}.gguf"
+      destination: "/models/{size}b/llama-2-{size}b-chat.{quant}.gguf"
