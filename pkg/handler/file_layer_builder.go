@@ -149,7 +149,7 @@ func (f *FileLayerBuilder) tarRemote(tw *tar.Writer, u *url.URL, newPath string)
 }
 
 func (f *FileLayerBuilder) tarRemoteFileToFile(tw *tar.Writer, u *url.URL, newPath string) error {
-	srcPath := path.Join(f.tmpPath, u.Scheme, u.Path)
+	srcPath := path.Join(f.tmpPath, u.Scheme, u.Host, u.Path)
 	stat, _ := os.Stat(srcPath)
 	if stat == nil {
 		resp, err := http.Get(u.String())
