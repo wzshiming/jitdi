@@ -132,13 +132,13 @@ func (h *Handler) getRules() []*pattern.Rule {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !strings.HasPrefix(r.URL.Path, "/v2/") {
+		_ = regErrNotFound.Write(w)
 		return
 	}
 
-	if !strings.HasPrefix(r.URL.Path, "/v2/") {
-		http.Error(w, "not found", http.StatusNotFound)
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		_ = regErrUnsupported.Write(w)
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 4 {
-		http.Error(w, "not found", http.StatusNotFound)
+		_ = regErrNotFound.Write(w)
 		return
 	}
 
@@ -165,7 +165,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) blobs(w http.ResponseWriter, r *http.Request, image, hash string) {
-	http.ServeFile(w, r, h.image.BlobsPath(hash))
+	f, err := os.Open(h.image.BlobsPath(hash))
+	if err != nil {
+		if os.IsNotExist(err) {
+			_ = regErrBlobUnknown.Write(w)
+			return
+		}
+		_ = regErrInternal(err).Write(w)
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		_ = regErrInternal(err).Write(w)
+		return
+	}
+	http.ServeContent(w, r, path.Base(r.URL.Path), stat.ModTime(), f)
 }
 
 func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag string) {
@@ -180,7 +196,7 @@ func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag s
 		err := h.build(image, tag)
 		if err != nil {
 			slog.Error("image.Build", "err", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			_ = regErrInternal(err).Write(w)
 			return
 		}
 	}
@@ -221,7 +237,11 @@ func (h *Handler) build(image, tag string) error {
 func serveManifest(w http.ResponseWriter, r *http.Request, manifestPath string) {
 	f, err := os.Open(manifestPath)
 	if err != nil {
-		http.NotFound(w, r)
+		if os.IsNotExist(err) {
+			_ = regErrNotFound.Write(w)
+			return
+		}
+		_ = regErrInternal(err).Write(w)
 		return
 	}
 	defer f.Close()
@@ -232,14 +252,12 @@ func serveManifest(w http.ResponseWriter, r *http.Request, manifestPath string) 
 
 	err = json.NewDecoder(f).Decode(&mediaType)
 	if err != nil {
-		slog.Error("json.Decode", "err", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		_ = regErrInternal(err).Write(w)
 		return
 	}
 	stat, err := f.Stat()
 	if err != nil {
-		slog.Error("Stat", "err", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		_ = regErrInternal(err).Write(w)
 		return
 	}
 
