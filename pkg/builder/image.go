@@ -1,4 +1,4 @@
-package handler
+package builder
 
 import (
 	"crypto/sha256"
@@ -28,14 +28,14 @@ import (
 	"github.com/wzshiming/jitdi/pkg/pattern"
 )
 
-type imageBuilder struct {
+type ImageBuilder struct {
 	cacheOllamaBlobs string
 	cacheTmp         string
 	cacheBlobs       string
 	cacheManifests   string
 }
 
-func newImageBuilder(cache string) (*imageBuilder, error) {
+func NewImageBuilder(cache string) (*ImageBuilder, error) {
 	cacheBlobs := path.Join(cache, "blobs")
 	cacheManifests := path.Join(cache, "manifests")
 	cacheTmp := path.Join(cache, "tmp")
@@ -47,7 +47,7 @@ func newImageBuilder(cache string) (*imageBuilder, error) {
 			return nil, err
 		}
 	}
-	return &imageBuilder{
+	return &ImageBuilder{
 		cacheOllamaBlobs: cacheOllamaBlobs,
 		cacheBlobs:       cacheBlobs,
 		cacheManifests:   cacheManifests,
@@ -55,7 +55,7 @@ func newImageBuilder(cache string) (*imageBuilder, error) {
 	}, nil
 }
 
-func (b *imageBuilder) Build(newImage string, meta *pattern.Action) error {
+func (b *ImageBuilder) Build(newImage string, meta *pattern.Action) error {
 	o := crane.GetOptions()
 
 	src := meta.GetBaseImage()
@@ -201,7 +201,7 @@ func (b *imageBuilder) Build(newImage string, meta *pattern.Action) error {
 	return nil
 }
 
-func (b *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alpha1.Mutate) ([]mutate.Addendum, error) {
+func (b *ImageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alpha1.Mutate) ([]mutate.Addendum, error) {
 	var layerMediaType types.MediaType
 	switch mediaType {
 	default:
@@ -248,11 +248,11 @@ func (b *imageBuilder) buildAddendum(mediaType types.MediaType, mutates []v1alph
 	return layers, nil
 }
 
-func (b *imageBuilder) ManifestPath(image, tag string) string {
+func (b *ImageBuilder) ManifestPath(image, tag string) string {
 	return path.Join(b.cacheManifests, image, tag, "manifest.json")
 }
 
-func (b *imageBuilder) BlobsPath(hex string) string {
+func (b *ImageBuilder) BlobsPath(hex string) string {
 	switch len(hex) {
 	case 64:
 		return path.Join(b.cacheBlobs, "sha256:"+hex)
@@ -262,7 +262,7 @@ func (b *imageBuilder) BlobsPath(hex string) string {
 	return path.Join(b.cacheBlobs, "unknown:"+hex)
 }
 
-func (b *imageBuilder) mutateManifest(img v1.Image, meta *pattern.Action, p *v1.Platform, mediaType types.MediaType) (v1.Image, error) {
+func (b *ImageBuilder) mutateManifest(img v1.Image, meta *pattern.Action, p *v1.Platform, mediaType types.MediaType) (v1.Image, error) {
 	mutates := meta.GetMutates(p)
 	if len(mutates) == 0 {
 		return img, nil

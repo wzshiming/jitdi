@@ -21,11 +21,12 @@ import (
 	"github.com/wzshiming/jitdi/pkg/atomic"
 	"github.com/wzshiming/jitdi/pkg/client/clientset/versioned"
 	"github.com/wzshiming/jitdi/pkg/pattern"
+	"github.com/wzshiming/jitdi/pkg/builder"
 )
 
 type Handler struct {
-	buildMutex atomic.SyncMap[string, *sync.RWMutex]
-	image      *imageBuilder
+	buildMutex   atomic.SyncMap[string, *sync.RWMutex]
+	imageBuilder *builder.ImageBuilder
 
 	rules []*pattern.Rule
 
@@ -44,7 +45,7 @@ func NewHandler(cache string, config []*v1alpha1.ImageSpec, clientset *versioned
 		}
 		rules = append(rules, r)
 	}
-	builder, err := newImageBuilder(cache)
+	imageBuilder, err := builder.NewImageBuilder(cache)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +54,9 @@ func NewHandler(cache string, config []*v1alpha1.ImageSpec, clientset *versioned
 		return rules[i].LessThan(rules[j])
 	})
 	h := &Handler{
-		image:     builder,
-		rules:     rules,
-		clientset: clientset,
+		imageBuilder: imageBuilder,
+		rules:        rules,
+		clientset:    clientset,
 	}
 
 	if clientset != nil {
@@ -165,7 +166,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) blobs(w http.ResponseWriter, r *http.Request, image, hash string) {
-	f, err := os.Open(h.image.BlobsPath(hash))
+	f, err := os.Open(h.imageBuilder.BlobsPath(hash))
 	if err != nil {
 		if os.IsNotExist(err) {
 			_ = regErrBlobUnknown.Write(w)
@@ -186,11 +187,11 @@ func (h *Handler) blobs(w http.ResponseWriter, r *http.Request, image, hash stri
 
 func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag string) {
 	if strings.HasPrefix(tag, "sha256:") {
-		serveManifest(w, r, h.image.BlobsPath(tag))
+		serveManifest(w, r, h.imageBuilder.BlobsPath(tag))
 		return
 	}
 
-	manifestPath := h.image.ManifestPath(image, tag)
+	manifestPath := h.imageBuilder.ManifestPath(image, tag)
 	_, err := os.Stat(manifestPath)
 	if err != nil {
 		err := h.build(image, tag)
@@ -201,7 +202,7 @@ func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag s
 		}
 	}
 
-	serveManifest(w, r, h.image.ManifestPath(image, tag))
+	serveManifest(w, r, h.imageBuilder.ManifestPath(image, tag))
 }
 
 func (h *Handler) build(image, tag string) error {
@@ -224,7 +225,7 @@ func (h *Handler) build(image, tag string) error {
 	for _, rule := range rules {
 		mutates, ok := rule.Match(ref)
 		if ok {
-			err := h.image.Build(ref, mutates)
+			err := h.imageBuilder.Build(ref, mutates)
 			if err != nil {
 				return err
 			}
