@@ -5,6 +5,11 @@ metadata:
 spec:
   match: "k8s/{base}/{file}:{tag}"
   baseImage: "docker.io/library/{base}:latest"
+  platforms:
+  - architecture: "amd64"
+    os: "linux"
+  - architecture: "arm64"
+    os: "linux"
   mutates:
   - file:
       source: "https://dl.k8s.io/{tag}/bin/{GOOS}/{GOARCH}/{file}"

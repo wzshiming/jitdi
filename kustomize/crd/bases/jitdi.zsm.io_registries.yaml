@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.14.0
-  name: images.jitdi.zsm.io
+  name: registries.jitdi.zsm.io
 spec:
   group: jitdi.zsm.io
   names:
-    kind: Image
-    listKind: ImageList
-    plural: images
-    singular: image
+    kind: Registry
+    listKind: RegistryList
+    plural: registries
+    singular: registry
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Image is the Schema for the images API
+        description: Registry is the Schema for the registrys API
         properties:
           apiVersion:
             description: |-
@@ -37,67 +37,30 @@ spec:
           metadata:
             type: object
           spec:
-            description: Spec defines the desired state of Image
+            description: Spec defines the desired state of Registry
             properties:
-              baseImage:
+              authentication:
+                properties:
+                  baseAuth:
+                    properties:
+                      password:
+                        type: string
+                      username:
+                        type: string
+                    required:
+                    - username
+                    type: object
+                type: object
+              endpoint:
                 type: string
-              match:
-                type: string
-              mutates:
-                items:
-                  description: Mutate holds the mutate information
-                  properties:
-                    file:
-                      description: File holds the file information
-                      properties:
-                        destination:
-                          type: string
-                        mode:
-                          type: string
-                        source:
-                          type: string
-                      required:
-                      - destination
-                      - source
-                      type: object
-                    ollama:
-                      description: Ollama holds the ollama information
-                      properties:
-                        model:
-                          type: string
-                        modelName:
-                          type: string
-                        workDir:
-                          type: string
-                      required:
-                      - model
-                      - modelName
-                      - workDir
-                      type: object
-                  type: object
-                type: array
-              platforms:
-                items:
-                  properties:
-                    architecture:
-                      type: string
-                    os:
-                      type: string
-                    variant:
-                      type: string
-                  required:
-                  - architecture
-                  - os
-                  type: object
-                type: array
-              storageImage:
-                type: string
+              insecure:
+                type: boolean
             type: object
           status:
-            description: Status defines the observed state of Image
+            description: Status defines the observed state of Registry
             properties:
               conditions:
-                description: Conditions holds conditions for image.
+                description: Conditions holds conditions for registry.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

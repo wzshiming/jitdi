@@ -6,6 +6,11 @@ spec:
   match: "llama-cpp/llama-2:{llama-tag}-{size}b-chat-{quant}-gguf"
   # https://github.com/ggerganov/llama.cpp/pkgs/container/llama.cpp
   baseImage: "ghcr.io/ggerganov/llama.cpp:{llama-tag}"
+  platforms:
+  - architecture: "amd64"
+    os: "linux"
+  - architecture: "arm64"
+    os: "linux"
   mutates:
   - file:
       # https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/tree/main

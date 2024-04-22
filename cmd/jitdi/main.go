@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/handlers"
 	"github.com/spf13/pflag"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -46,14 +47,15 @@ func main() {
 
 	logger := slog.Default()
 
-	var staticConfig []*v1alpha1.ImageSpec
+	var staticImageConfig []*v1alpha1.Image
+	var staticRegistryConfig []*v1alpha1.Registry
 	if config != "" {
 		file, err := os.Open(config)
 		if err != nil {
 			logger.Error("failed to open config file", "err", err)
 			os.Exit(1)
 		}
-		staticConfig, err = loadConfig(file)
+		staticImageConfig, staticRegistryConfig, err = loadConfig(file)
 		if err != nil {
 			logger.Error("failed to load config", "err", err)
 			os.Exit(1)
@@ -92,7 +94,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	h, err := handler.NewHandler(cache, staticConfig, clientset)
+	h, err := handler.NewHandler(cache, staticImageConfig, staticRegistryConfig, clientset)
 	if err != nil {
 		logger.Error("failed to NewHandler", "err", err)
 		os.Exit(1)
@@ -115,8 +117,9 @@ func main() {
 	}
 }
 
-func loadConfig(r io.Reader) ([]*v1alpha1.ImageSpec, error) {
-	var images []*v1alpha1.ImageSpec
+func loadConfig(r io.Reader) ([]*v1alpha1.Image, []*v1alpha1.Registry, error) {
+	var images []*v1alpha1.Image
+	var registries []*v1alpha1.Registry
 	decoder := yaml.NewYAMLToJSONDecoder(r)
 	for {
 		var raw json.RawMessage
@@ -125,25 +128,40 @@ func loadConfig(r io.Reader) ([]*v1alpha1.ImageSpec, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return nil, fmt.Errorf("failed to decode %q: %w", raw, err)
+			return nil, nil, fmt.Errorf("failed to decode %q: %w", raw, err)
 		}
 		if len(raw) == 0 {
 			// Ignore empty documents
 			continue
 		}
-		var img v1alpha1.Image
-		err = json.Unmarshal(raw, &img)
+
+		meta := metav1.TypeMeta{}
+		err = json.Unmarshal(raw, &meta)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if img.TypeMeta.APIVersion != v1alpha1.GroupVersion.String() {
-			return nil, fmt.Errorf("unexpected APIVersion %q", img.TypeMeta.APIVersion)
+		if meta.APIVersion != v1alpha1.GroupVersion.String() {
+			return nil, nil, fmt.Errorf("unexpected APIVersion %q", meta.APIVersion)
 		}
-		if img.Kind != v1alpha1.ImageKind {
-			return nil, fmt.Errorf("unexpected Kind %q", img.Kind)
+		switch meta.Kind {
+		default:
+			return nil, nil, fmt.Errorf("unexpected Kind %q", meta.Kind)
+		case v1alpha1.ImageKind:
+			img := v1alpha1.Image{}
+			err = json.Unmarshal(raw, &img)
+			if err != nil {
+				return nil, nil, err
+			}
+			images = append(images, &img)
+		case v1alpha1.RegistryKind:
+			registry := v1alpha1.Registry{}
+			err = json.Unmarshal(raw, &registry)
+			if err != nil {
+				return nil, nil, err
+			}
+			registries = append(registries, &registry)
 		}
 
-		images = append(images, &img.Spec)
 	}
-	return images, nil
+	return images, registries, nil
 }

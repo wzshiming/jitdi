@@ -32,6 +32,10 @@ func (c *FakeApisV1alpha1) Images() v1alpha1.ImageInterface {
 	return &FakeImages{c}
 }
 
+func (c *FakeApisV1alpha1) Registries() v1alpha1.RegistryInterface {
+	return &FakeRegistries{c}
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeApisV1alpha1) RESTClient() rest.Interface {

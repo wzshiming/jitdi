@@ -5,9 +5,11 @@ import (
 )
 
 type Rule struct {
-	match     *pattern
-	baseImage string
-	mutates   []v1alpha1.Mutate
+	match        *pattern
+	baseImage    string
+	mutates      []v1alpha1.Mutate
+	storageImage string
+	platforms    []v1alpha1.Platform
 }
 
 func NewRule(conf *v1alpha1.ImageSpec) (*Rule, error) {
@@ -16,9 +18,11 @@ func NewRule(conf *v1alpha1.ImageSpec) (*Rule, error) {
 		return nil, err
 	}
 	return &Rule{
-		match:     pat,
-		baseImage: conf.BaseImage,
-		mutates:   conf.Mutates,
+		match:        pat,
+		baseImage:    conf.BaseImage,
+		mutates:      conf.Mutates,
+		storageImage: conf.StorageImage,
+		platforms:    conf.Platforms,
 	}, nil
 }
 
@@ -30,6 +34,7 @@ func (r *Rule) Match(image string) (*Action, bool) {
 
 	return &Action{
 		params: params,
+		match:  image,
 		rule:   r,
 	}, true
 }

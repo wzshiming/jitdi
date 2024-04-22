@@ -9,3 +9,9 @@ spec:
   - ollama:
       model: "registry.ollama.ai/library/{model}:{tag}"
       workDir: "/root/.ollama/models"
+      modelName: "{model}"
+  platforms:
+  - architecture: "amd64"
+    os: "linux"
+  - architecture: "arm64"
+    os: "linux"

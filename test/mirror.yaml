@@ -5,3 +5,8 @@ metadata:
 spec:
   match: "library/{image}:{tag}"
   baseImage: "docker.io/library/{image}:{tag}"
+  platforms:
+  - architecture: "amd64"
+    os: "linux"
+  - architecture: "arm64"
+    os: "linux"

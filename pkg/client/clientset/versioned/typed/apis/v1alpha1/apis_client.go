@@ -29,6 +29,7 @@ import (
 type ApisV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	ImagesGetter
+	RegistriesGetter
 }
 
 // ApisV1alpha1Client is used to interact with features provided by the apis group.
@@ -38,6 +39,10 @@ type ApisV1alpha1Client struct {
 
 func (c *ApisV1alpha1Client) Images() ImageInterface {
 	return newImages(c)
+}
+
+func (c *ApisV1alpha1Client) Registries() RegistryInterface {
+	return newRegistries(c)
 }
 
 // NewForConfig creates a new ApisV1alpha1Client for the given config.

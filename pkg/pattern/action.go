@@ -10,11 +10,27 @@ import (
 
 type Action struct {
 	params map[string]string
+	match  string
 	rule   *Rule
+}
+
+func (r *Action) GetMatchImage() string {
+	return r.match
 }
 
 func (r *Action) GetBaseImage() string {
 	return replaceWithParams(r.rule.baseImage, r.params)
+}
+
+func (r *Action) GetStorageImage() string {
+	return replaceWithParams(r.rule.storageImage, r.params)
+}
+
+func (r *Action) GetPlatforms() []v1alpha1.Platform {
+	if len(r.rule.platforms) == 0 {
+		return nil
+	}
+	return r.rule.platforms
 }
 
 func (r *Action) GetMutates(p *v1.Platform) []v1alpha1.Mutate {
