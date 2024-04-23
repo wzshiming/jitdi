@@ -88,6 +88,10 @@ func (h *Handler) forwardBlob(w http.ResponseWriter, r *http.Request, image, has
 		return
 	}
 	w.Header().Set("Content-Type", string(mediaType))
+	if r.Method == http.MethodHead {
+		return
+	}
+
 	if strings.HasSuffix(string(mediaType), "gzip") {
 		r, err := layer.Compressed()
 		if err != nil {
@@ -97,8 +101,7 @@ func (h *Handler) forwardBlob(w http.ResponseWriter, r *http.Request, image, has
 
 		_, err = io.Copy(w, r)
 		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
+			slog.Error("io.Copy", "err", err)
 		}
 	} else {
 		r, err := layer.Uncompressed()
@@ -109,8 +112,7 @@ func (h *Handler) forwardBlob(w http.ResponseWriter, r *http.Request, image, has
 
 		_, err = io.Copy(w, r)
 		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
+			slog.Error("io.Copy", "err", err)
 		}
 	}
 }
@@ -134,14 +136,21 @@ func (h *Handler) forwardManifestBlob(w http.ResponseWriter, r *http.Request, im
 		return
 	}
 
+	w.Header().Set("Content-Type", string(desc.MediaType))
+	if r.Method == http.MethodHead {
+		return
+	}
+
 	manifest, err := desc.RawManifest()
 	if err != nil {
 		_ = regErrInternal(err).Write(w)
 		return
 	}
 
-	w.Header().Set("Content-Type", string(desc.MediaType))
-	w.Write(manifest)
+	_, err = w.Write(manifest)
+	if err != nil {
+		slog.Error("w.Write", "err", err)
+	}
 }
 
 func (h *Handler) forwardManifest(w http.ResponseWriter, r *http.Request, image, tag string, action *pattern.Action) {
@@ -167,6 +176,10 @@ func (h *Handler) forwardManifest(w http.ResponseWriter, r *http.Request, image,
 		}
 
 		desc, err = puller.Get(r.Context(), refDestination)
+		if err != nil {
+			_ = regErrInternal(err).Write(w)
+			return
+		}
 	}
 
 	manifest, err := desc.RawManifest()
@@ -176,11 +189,13 @@ func (h *Handler) forwardManifest(w http.ResponseWriter, r *http.Request, image,
 	}
 
 	w.Header().Set("Content-Type", string(desc.MediaType))
+	if r.Method == http.MethodHead {
+		return
+	}
 
 	_, err = w.Write(manifest)
 	if err != nil {
-		_ = regErrInternal(err).Write(w)
-		return
+		slog.Error("w.Write", "err", err)
 	}
 }
 
