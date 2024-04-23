@@ -41,11 +41,10 @@ type ImageStatus struct {
 
 // ImageSpec holds the specification for image
 type ImageSpec struct {
-	Match        string     `json:"match,omitempty"`
-	BaseImage    string     `json:"baseImage,omitempty"`
-	Mutates      []Mutate   `json:"mutates,omitempty"`
-	StorageImage string     `json:"storageImage,omitempty"`
-	Platforms    []Platform `json:"platforms,omitempty"`
+	Match     string     `json:"match,omitempty"`
+	BaseImage string     `json:"baseImage,omitempty"`
+	Mutates   []Mutate   `json:"mutates,omitempty"`
+	Platforms []Platform `json:"platforms,omitempty"`
 }
 
 type Platform struct {

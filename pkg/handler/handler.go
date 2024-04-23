@@ -32,7 +32,7 @@ type Handler struct {
 	blobPath     string
 	linkPath     string
 
-	storageImageProxy string
+	storageRegistry string
 
 	buildMutex atomic.SyncMap[string, *sync.RWMutex]
 
@@ -51,9 +51,9 @@ type Handler struct {
 
 type option func(*Handler)
 
-func WithStorageImageProxy(proxy string) option {
+func WithStorageRegistry(storageRegistry string) option {
 	return func(h *Handler) {
-		h.storageImageProxy = proxy
+		h.storageRegistry = storageRegistry
 	}
 }
 
@@ -302,7 +302,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/v2/" {
-		w.Write([]byte("ok"))
+		w.Write([]byte("{}"))
 		return
 	}
 
@@ -326,6 +326,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag string) {
+	if strings.HasPrefix(tag, "sha256:") {
+		if h.storageRegistry != "" {
+			h.forwardManifestBlob(w, r, image, tag)
+			return
+		}
+		blobPath := storage.LocalBlobPath(h.blobPath, tag)
+		serveManifest(w, r, blobPath)
+		return
+	}
+
 	ref := image + ":" + tag
 	rules := h.getImageRules()
 
@@ -343,16 +353,11 @@ func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag s
 		return
 	}
 
-	storageImage := action.GetStorageImage()
-	if storageImage != "" {
-		h.redirectManifest(w, r, image, tag, action, storageImage)
-	} else {
-		h.localManifests(w, r, image, tag, action)
-	}
+	h.localManifests(w, r, image, tag, action)
 	return
 }
 
-func (h *Handler) buildAndPush(ctx context.Context, repo, tag string, action *pattern.Action) error {
+func (h *Handler) buildAndSave(ctx context.Context, repo, tag string, action *pattern.Action) error {
 	ref := repo + ":" + tag
 	mut, ok := h.buildMutex.LoadOrStore(ref, &sync.RWMutex{})
 	if ok {
@@ -388,9 +393,9 @@ func (h *Handler) buildAndPush(ctx context.Context, repo, tag string, action *pa
 		refDestination name.Reference
 	)
 
-	destination := action.GetStorageImage()
+	destination := h.storageRegistry
 	if destination != "" {
-		refDestination, err = name.ParseReference(destination)
+		refDestination, err = name.ParseReference(destination + "/" + action.GetMatchImage())
 		if err != nil {
 			return err
 		}

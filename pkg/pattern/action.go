@@ -22,10 +22,6 @@ func (r *Action) GetBaseImage() string {
 	return replaceWithParams(r.rule.baseImage, r.params)
 }
 
-func (r *Action) GetStorageImage() string {
-	return replaceWithParams(r.rule.storageImage, r.params)
-}
-
 func (r *Action) GetPlatforms() []v1alpha1.Platform {
 	if len(r.rule.platforms) == 0 {
 		return nil

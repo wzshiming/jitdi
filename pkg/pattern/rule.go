@@ -5,11 +5,10 @@ import (
 )
 
 type Rule struct {
-	match        *pattern
-	baseImage    string
-	mutates      []v1alpha1.Mutate
-	storageImage string
-	platforms    []v1alpha1.Platform
+	match     *pattern
+	baseImage string
+	mutates   []v1alpha1.Mutate
+	platforms []v1alpha1.Platform
 }
 
 func NewRule(conf *v1alpha1.ImageSpec) (*Rule, error) {
@@ -18,11 +17,10 @@ func NewRule(conf *v1alpha1.ImageSpec) (*Rule, error) {
 		return nil, err
 	}
 	return &Rule{
-		match:        pat,
-		baseImage:    conf.BaseImage,
-		mutates:      conf.Mutates,
-		storageImage: conf.StorageImage,
-		platforms:    conf.Platforms,
+		match:     pat,
+		baseImage: conf.BaseImage,
+		mutates:   conf.Mutates,
+		platforms: conf.Platforms,
 	}, nil
 }
 

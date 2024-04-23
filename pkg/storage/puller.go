@@ -40,3 +40,7 @@ func (p *Puller) Head(ctx context.Context, ref name.Reference) (*v1.Descriptor, 
 func (p *Puller) Get(ctx context.Context, ref name.Reference) (*remote.Descriptor, error) {
 	return p.puller.Get(ctx, ref)
 }
+
+func (p *Puller) Layer(ctx context.Context, ref name.Digest) (v1.Layer, error) {
+	return p.puller.Layer(ctx, ref)
+}

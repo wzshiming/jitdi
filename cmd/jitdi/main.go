@@ -24,9 +24,9 @@ import (
 )
 
 var (
-	address           string
-	cache             string
-	storageImageProxy string
+	address         string
+	cache           string
+	storageRegistry string
 
 	config     []string
 	kubeconfig string
@@ -37,7 +37,7 @@ func init() {
 	pflag.StringVar(&address, "address", ":8888", "listen on the address")
 
 	pflag.StringVar(&cache, "cache", "./cache", "cache directory")
-	pflag.StringVar(&storageImageProxy, "storage-image-proxy", "", "storage image proxy")
+	pflag.StringVar(&storageRegistry, "storage-registry", "", "storage registry")
 
 	pflag.StringSliceVarP(&config, "config", "c", nil, "config file")
 	pflag.StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig file")
@@ -88,7 +88,7 @@ func main() {
 	mux := http.NewServeMux()
 	h, err := handler.NewHandler(
 		handler.WithCache(cache),
-		handler.WithStorageImageProxy(storageImageProxy),
+		handler.WithStorageRegistry(storageRegistry),
 		handler.WithClientset(clientset),
 		handler.WithImageConfig(staticImageConfig),
 		handler.WithRegistryConfig(staticRegistryConfig),
