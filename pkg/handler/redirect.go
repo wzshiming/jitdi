@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -12,9 +13,7 @@ import (
 	"github.com/wzshiming/jitdi/pkg/pattern"
 )
 
-func (h *Handler) redirectManifest(w http.ResponseWriter, r *http.Request, image, tag string, action *pattern.Action) {
-	storageImage := action.GetStorageImage()
-
+func (h *Handler) redirectManifest(w http.ResponseWriter, r *http.Request, image, tag string, action *pattern.Action, storageImage string) {
 	storageRef, err := name.ParseReference(storageImage)
 	if err != nil {
 		_ = regErrInternal(err).Write(w)
@@ -27,7 +26,7 @@ func (h *Handler) redirectManifest(w http.ResponseWriter, r *http.Request, image
 		return
 	}
 
-	desc, err := puller.Get(r.Context(), storageRef)
+	_, err = puller.Get(r.Context(), storageRef)
 	if err != nil {
 		var t *transport.Error
 		if errors.As(err, &t) {
@@ -39,28 +38,19 @@ func (h *Handler) redirectManifest(w http.ResponseWriter, r *http.Request, image
 				}
 			}
 		}
+	}
 
-		desc, err = puller.Get(r.Context(), storageRef)
+	if h.storageImageProxy != "" {
+		storageRef, err := name.ParseReference(strings.TrimSuffix(h.storageImageProxy, "/") + "/" + storageImage)
 		if err != nil {
 			_ = regErrInternal(err).Write(w)
 			return
 		}
-	}
-	_ = desc
-
-	manifest, err := desc.RawManifest()
-	if err != nil {
-		_ = regErrInternal(err).Write(w)
+		newURL := ReferenceToURL(storageRef)
+		slog.Info("redirect", "from", r.URL, "to", newURL, "image", storageRef)
+		http.Redirect(w, r, newURL, http.StatusTemporaryRedirect)
 		return
 	}
-
-	w.Header().Set("Content-Type", string(desc.MediaType))
-	_, err = w.Write(manifest)
-	if err != nil {
-		_ = regErrInternal(err).Write(w)
-		return
-	}
-
 	newURL := ReferenceToURL(storageRef)
 
 	slog.Info("redirect", "from", r.URL, "to", newURL, "image", storageRef)

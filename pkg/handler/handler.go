@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"path"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/wzshiming/httpseek"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +32,8 @@ type Handler struct {
 	blobPath     string
 	linkPath     string
 
+	storageImageProxy string
+
 	buildMutex atomic.SyncMap[string, *sync.RWMutex]
 
 	crMut sync.Mutex
@@ -49,35 +49,67 @@ type Handler struct {
 	clientset *versioned.Clientset
 }
 
-func NewHandler(cache string, imageConfig []*v1alpha1.Image, registryConfig []*v1alpha1.Registry, clientset *versioned.Clientset) (*Handler, error) {
-	rules := make([]*pattern.Rule, 0, len(imageConfig))
-	for _, c := range imageConfig {
-		r, err := pattern.NewRule(&c.Spec)
-		if err != nil {
-			return nil, err
+type option func(*Handler)
+
+func WithStorageImageProxy(proxy string) option {
+	return func(h *Handler) {
+		h.storageImageProxy = proxy
+	}
+}
+
+func WithClientset(clientset *versioned.Clientset) option {
+	return func(h *Handler) {
+		h.clientset = clientset
+	}
+}
+
+func WithCache(cache string) option {
+	return func(h *Handler) {
+		h.manifestPath = path.Join(cache, "manifests")
+		h.blobPath = path.Join(cache, "blobs")
+		h.linkPath = path.Join(cache, "links")
+	}
+}
+
+func WithImageConfig(imageConfig []*v1alpha1.Image) option {
+	return func(h *Handler) {
+		rules := make([]*pattern.Rule, 0, len(imageConfig))
+		for _, c := range imageConfig {
+			r, err := pattern.NewRule(&c.Spec)
+			if err != nil {
+				slog.Error("newImageRule", "err", err)
+				continue
+			}
+			rules = append(rules, r)
 		}
-		rules = append(rules, r)
+
+		sort.Slice(rules, func(i, j int) bool {
+			return rules[i].LessThan(rules[j])
+		})
+
+		h.imageRules = rules
+	}
+}
+
+func WithRegistryConfig(registryConfig []*v1alpha1.Registry) option {
+	return func(h *Handler) {
+		registries := map[string]*v1alpha1.RegistrySpec{}
+		for _, c := range registryConfig {
+			registries[c.Name] = &c.Spec
+		}
+
+		h.registryRules = registries
+	}
+}
+
+func NewHandler(opts ...option) (*Handler, error) {
+	h := &Handler{}
+
+	for _, opt := range opts {
+		opt(h)
 	}
 
-	sort.Slice(rules, func(i, j int) bool {
-		return rules[i].LessThan(rules[j])
-	})
-
-	registries := map[string]*v1alpha1.RegistrySpec{}
-	for _, c := range registryConfig {
-		registries[c.Name] = &c.Spec
-	}
-
-	h := &Handler{
-		imageRules:    rules,
-		registryRules: registries,
-		clientset:     clientset,
-		manifestPath:  path.Join(cache, "manifests"),
-		blobPath:      path.Join(cache, "blobs"),
-		linkPath:      path.Join(cache, "links"),
-	}
-
-	if clientset != nil {
+	if h.clientset != nil {
 		go h.startWatchImageCR(context.Background())
 	}
 
@@ -313,56 +345,7 @@ func (h *Handler) manifests(w http.ResponseWriter, r *http.Request, image, tag s
 
 	storageImage := action.GetStorageImage()
 	if storageImage != "" {
-		storageRef, err := name.ParseReference(storageImage)
-		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
-		}
-
-		puller, err := h.getPuller(storageRef)
-		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
-		}
-
-		desc, err := puller.Get(r.Context(), storageRef)
-		if err != nil {
-			var t *transport.Error
-			if errors.As(err, &t) {
-				if t.StatusCode == http.StatusNotFound {
-					err = h.buildAndPush(context.Background(), image, tag, action)
-					if err != nil {
-						_ = regErrInternal(err).Write(w)
-						return
-					}
-				}
-			}
-
-			desc, err = puller.Get(r.Context(), storageRef)
-			if err != nil {
-				_ = regErrInternal(err).Write(w)
-				return
-			}
-		}
-		_ = desc
-
-		manifest, err := desc.RawManifest()
-		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
-		}
-
-		w.Header().Set("Content-Type", string(desc.MediaType))
-		_, err = w.Write(manifest)
-		if err != nil {
-			_ = regErrInternal(err).Write(w)
-			return
-		}
-
-		newURL := ReferenceToURL(storageRef)
-
-		slog.Info("redirect", "from", r.URL, "to", newURL, "image", storageRef)
-		http.Redirect(w, r, newURL, http.StatusTemporaryRedirect)
+		h.redirectManifest(w, r, image, tag, action, storageImage)
 	} else {
 		h.localManifests(w, r, image, tag, action)
 	}

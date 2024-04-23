@@ -24,19 +24,22 @@ import (
 )
 
 var (
-	address string
-	cache   string
+	address           string
+	cache             string
+	storageImageProxy string
 
-	config     string
+	config     []string
 	kubeconfig string
 	master     string
 )
 
 func init() {
 	pflag.StringVar(&address, "address", ":8888", "listen on the address")
-	pflag.StringVar(&cache, "cache", "./cache", "cache directory")
 
-	pflag.StringVarP(&config, "config", "c", "", "config file")
+	pflag.StringVar(&cache, "cache", "./cache", "cache directory")
+	pflag.StringVar(&storageImageProxy, "storage-image-proxy", "", "storage image proxy")
+
+	pflag.StringSliceVarP(&config, "config", "c", nil, "config file")
 	pflag.StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig file")
 	pflag.StringVar(&master, "master", "", "master url")
 	pflag.Parse()
@@ -47,24 +50,14 @@ func main() {
 
 	logger := slog.Default()
 
-	var staticImageConfig []*v1alpha1.Image
-	var staticRegistryConfig []*v1alpha1.Registry
-	if config != "" {
-		file, err := os.Open(config)
-		if err != nil {
-			logger.Error("failed to open config file", "err", err)
-			os.Exit(1)
-		}
-		staticImageConfig, staticRegistryConfig, err = loadConfig(file)
-		if err != nil {
-			logger.Error("failed to load config", "err", err)
-			os.Exit(1)
-		}
+	staticImageConfig, staticRegistryConfig, err := loadConfigFile(config...)
+	if err != nil {
+		logger.Error("failed to load config", "err", err)
+		os.Exit(1)
 	}
 
 	var clientset *versioned.Clientset
 	if kubeconfig != "" {
-
 		clientConfig, err := clientcmd.BuildConfigFromFlags(master, kubeconfig)
 		if err != nil {
 			logger.Error("failed to BuildConfigFromFlags", "err", err)
@@ -93,8 +86,13 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-
-	h, err := handler.NewHandler(cache, staticImageConfig, staticRegistryConfig, clientset)
+	h, err := handler.NewHandler(
+		handler.WithCache(cache),
+		handler.WithStorageImageProxy(storageImageProxy),
+		handler.WithClientset(clientset),
+		handler.WithImageConfig(staticImageConfig),
+		handler.WithRegistryConfig(staticRegistryConfig),
+	)
 	if err != nil {
 		logger.Error("failed to NewHandler", "err", err)
 		os.Exit(1)
@@ -115,6 +113,24 @@ func main() {
 		logger.Error("failed to ListenAndServe", "err", err)
 		os.Exit(1)
 	}
+}
+
+func loadConfigFile(path ...string) ([]*v1alpha1.Image, []*v1alpha1.Registry, error) {
+	var images []*v1alpha1.Image
+	var registries []*v1alpha1.Registry
+	for _, p := range path {
+		file, err := os.Open(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		imgs, regs, err := loadConfig(file)
+		if err != nil {
+			return nil, nil, err
+		}
+		images = append(images, imgs...)
+		registries = append(registries, regs...)
+	}
+	return images, registries, nil
 }
 
 func loadConfig(r io.Reader) ([]*v1alpha1.Image, []*v1alpha1.Registry, error) {
