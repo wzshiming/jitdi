@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -148,36 +147,20 @@ func saveLayer(layer v1.Layer, cacheBlobs string) (retErr error) {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 
+	file, err := os.CreateTemp(dir, "tmp-")
+	if err != nil {
+		return err
+	}
+
 	r, err := layer.Compressed()
 	if err != nil {
 		return fmt.Errorf("getting compressed: %w", err)
 	}
 
-	file, err := os.CreateTemp(dir, "tmp-")
+	err = writeFileWithReader(file, r)
 	if err != nil {
-		_ = r.Close()
-		return err
+		return fmt.Errorf("write file: %w", err)
 	}
-	defer func() {
-		err := file.Close()
-		if err != nil {
-			if retErr == nil {
-				retErr = err
-			} else {
-				retErr = errors.Join(retErr, err)
-			}
-		}
-		if retErr != nil {
-			_ = os.Remove(file.Name())
-		}
-	}()
-
-	_, err = io.Copy(file, r)
-	if err != nil {
-		_ = r.Close()
-		return err
-	}
-	_ = r.Close()
 
 	digest, err = layer.Digest()
 	if err != nil {
@@ -201,6 +184,30 @@ func saveLayer(layer v1.Layer, cacheBlobs string) (retErr error) {
 
 	slog.Info("save layer", "path", cachePath, "size", size)
 
+	return nil
+}
+
+func writeFileWithReader(f *os.File, r io.ReadCloser) (retErr error) {
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(f.Name())
+		}
+	}()
+	_, err := io.Copy(f, r)
+	if err != nil {
+		_ = r.Close()
+		_ = f.Close()
+		return err
+	}
+	err = r.Close()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	err = f.Close()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
