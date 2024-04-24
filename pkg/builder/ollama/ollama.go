@@ -112,8 +112,10 @@ func (o *Ollama) tarManifest(image v1.Image, modelPath, workDir, modelName strin
 	}
 
 	if modelName == "" {
-		modelName = strings.Replace(modelPath, ":", "/", 1)
+		modelName = modelPath
 	}
+
+	modelName = strings.Replace(modelName, ":", "/", 1)
 
 	newPath := path.Join(workDir, "manifests", modelName)
 
